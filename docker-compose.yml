@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: voiceshield-console-backend
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      - APP_ENV=development
+      - PORT=4000
+      - DATABASE_URL=postgresql://voiceshield_user:voiceshield_password@postgres:5432/voiceshield_console?sslmode=disable
+      - RDS_IDENTIFIER=voiceshield-local-rds
+      - JWT_SECRET=dev-voiceshield-jwt-secret-key-32charsmin!
+      - JWT_EXPIRES_IN=1h
+      - REFRESH_TOKEN_SECRET=dev-voiceshield-refresh-token-secret-key-32chars!
+      - REFRESH_TOKEN_EXPIRES_IN=7d
+      - STORAGE_DRIVER=local
+      - LOCAL_STORAGE_DIR=/app/storage
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+      - LOG_LEVEL=debug
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - evidence_storage:/app/storage
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: voiceshield-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=voiceshield_user
+      - POSTGRES_PASSWORD=voiceshield_password
+      - POSTGRES_DB=voiceshield_console
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voiceshield_user -d voiceshield_console"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pg_data:
+  evidence_storage:
