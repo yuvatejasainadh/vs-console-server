@@ -1,17 +1,26 @@
-import { validateDatabaseConfig, DatabaseConfig } from '../src/config/env';
+import {
+  validateDatabaseConfig,
+  DatabaseConfig,
+  loadEnvironment,
+  config,
+} from '../src/config/env';
 import { DatabaseService } from '../src/database/db.service';
 import { runMigrations, resolveMigrationsDir } from '../src/database/migration-runner';
 import fs from 'fs';
 import path from 'path';
 
 describe('Database Configuration & AWS RDS Production Readiness', () => {
+  afterAll(async () => {
+    await DatabaseService.getInstance().close();
+  });
+
   describe('Database Configuration Validation', () => {
     it('should validate production configuration with dedicated console database user', () => {
       const prodConfig: DatabaseConfig = {
         host: 'voiceshield-prod-db.chcku4ke2u3b.ap-south-2.rds.amazonaws.com',
         port: 5432,
         name: 'voiceshield_console',
-        user: 'voiceshield_console_user',
+        user: 'voiceshield_console_app',
         password: 'secure_mock_password',
         ssl: true,
         sslRejectUnauthorized: true,
@@ -68,7 +77,7 @@ describe('Database Configuration & AWS RDS Production Readiness', () => {
         host: 'voiceshield-prod-db.chcku4ke2u3b.ap-south-2.rds.amazonaws.com',
         port: 5432,
         name: 'voiceshield_main_backend',
-        user: 'voiceshield_console_user',
+        user: 'voiceshield_console_app',
         password: 'mock_password',
         ssl: true,
         sslRejectUnauthorized: true,
@@ -80,6 +89,22 @@ describe('Database Configuration & AWS RDS Production Readiness', () => {
 
       const result = validateDatabaseConfig(otherDbConfig, 'production');
       expect(result.warnings.some((w) => w.includes('voiceshield_console'))).toBe(true);
+    });
+  });
+
+  describe('Explicit Environment Loading', () => {
+    it('should load production environment configuration on demand', () => {
+      const loadedEnv = loadEnvironment('production');
+      expect(loadedEnv).toBe('production');
+      expect(config.appEnv).toBe('production');
+      expect(config.database.ssl).toBe(true);
+      expect(config.database.sslRejectUnauthorized).toBe(true);
+      expect(config.database.name).toBe('voiceshield_console');
+      expect(config.database.user).toBe('voiceshield_console_app');
+
+      // Reset back to test
+      loadEnvironment('test');
+      expect(config.appEnv).toBe('test');
     });
   });
 
@@ -98,7 +123,7 @@ describe('Database Configuration & AWS RDS Production Readiness', () => {
         host: 'voiceshield-prod-db.chcku4ke2u3b.ap-south-2.rds.amazonaws.com',
         port: 5432,
         name: 'voiceshield_console',
-        user: 'voiceshield_console_user',
+        user: 'voiceshield_console_app',
         password: 'test_password',
         ssl: true,
         sslCa: 'non_existent_file.pem',
@@ -109,18 +134,16 @@ describe('Database Configuration & AWS RDS Production Readiness', () => {
         idleTimeoutMillis: 30000,
       };
 
-      // Should not throw even if CA path does not exist
       expect(() => db.initPool(mockCustomConfig)).not.toThrow();
       expect(db.getPool()).toBeDefined();
 
-      // Reset back to default
+      loadEnvironment('test');
       db.initPool();
     });
 
     it('should return false on checkHealth when database connection is unreachable or simulated offline', async () => {
       const db = DatabaseService.getInstance();
       const isHealthy = await db.checkHealth();
-      // In local unit tests without live postgres running, checkHealth returns false gracefully without throwing
       expect(typeof isHealthy).toBe('boolean');
     });
   });
@@ -131,12 +154,6 @@ describe('Database Configuration & AWS RDS Production Readiness', () => {
       expect(fs.existsSync(dir)).toBe(true);
       const files = fs.readdirSync(dir).filter((f) => f.endsWith('.sql'));
       expect(files).toContain('001_create_core_tables.sql');
-    });
-
-    it('should handle offline database without crashing when running migrations', async () => {
-      const result = await runMigrations();
-      expect(result).toBeDefined();
-      expect(typeof result.success).toBe('boolean');
     });
 
     it('should verify migration SQL file contains idempotent statements', () => {
@@ -150,6 +167,51 @@ describe('Database Configuration & AWS RDS Production Readiness', () => {
       expect(sqlContent).toMatch(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+users/i);
       expect(sqlContent).toMatch(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+work_items/i);
       expect(sqlContent).toMatch(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+devices/i);
+    });
+
+    it('should support mock database service to verify tracking and idempotency execution', async () => {
+      const executedQueries: string[] = [];
+      const mockAppliedMigrations = new Set<string>();
+
+      const mockDb: any = {
+        testConnection: jest.fn().mockResolvedValue({ connected: true }),
+        checkHealth: jest.fn().mockResolvedValue(true),
+        query: jest.fn().mockImplementation((sql: string) => {
+          executedQueries.push(sql);
+          if (sql.includes('SELECT id FROM schema_migrations')) {
+            return Promise.resolve({
+              rows: Array.from(mockAppliedMigrations).map((id) => ({ id })),
+              rowCount: mockAppliedMigrations.size,
+            });
+          }
+          return Promise.resolve({ rows: [], rowCount: 0 });
+        }),
+        transaction: jest.fn().mockImplementation(async (cb: any) => {
+          const mockClient = {
+            query: jest.fn().mockImplementation((sql: string, params?: any[]) => {
+              executedQueries.push(sql);
+              if (params && params[0]) {
+                mockAppliedMigrations.add(params[0]);
+              }
+              return Promise.resolve({ rows: [], rowCount: 0 });
+            }),
+          };
+          return cb(mockClient);
+        }),
+        initPool: jest.fn(),
+      };
+
+      // First run: should apply unapplied migration
+      const firstRun = await runMigrations({}, mockDb);
+      expect(firstRun.success).toBe(true);
+      expect(firstRun.applied).toContain('001_create_core_tables.sql');
+      expect(firstRun.skipped).toHaveLength(0);
+
+      // Second run: should skip already-applied migration
+      const secondRun = await runMigrations({}, mockDb);
+      expect(secondRun.success).toBe(true);
+      expect(secondRun.applied).toHaveLength(0);
+      expect(secondRun.skipped).toContain('001_create_core_tables.sql');
     });
   });
 });

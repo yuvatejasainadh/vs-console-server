@@ -9,15 +9,31 @@ class PostgresClientAdapter implements IDatabaseClient {
 
   async query<T = any>(sql: string, params?: any[]): Promise<QueryResult<T>> {
     const res = await this.client.query(sql, params);
+    const rows: T[] = Array.isArray(res) ? (res[res.length - 1]?.rows || []) : (res?.rows || []);
+    const rowCount = Array.isArray(res)
+      ? (res[res.length - 1]?.rowCount ?? rows.length)
+      : (res?.rowCount ?? rows.length);
     return {
-      rows: res.rows,
-      rowCount: res.rowCount ?? res.rows.length,
+      rows,
+      rowCount,
     };
   }
 
   release(): void {
     this.client.release();
   }
+}
+
+export interface ConnectionTestResult {
+  connected: boolean;
+  error?: {
+    message: string;
+    code?: string;
+    name?: string;
+    severity?: string;
+    detail?: string;
+    routine?: string;
+  };
 }
 
 export class DatabaseService implements IDatabaseService {
@@ -98,9 +114,13 @@ export class DatabaseService implements IDatabaseService {
       throw new Error('Database pool not initialized');
     }
     const res = await this.pool.query(sql, params);
+    const rows: T[] = Array.isArray(res) ? (res[res.length - 1]?.rows || []) : (res?.rows || []);
+    const rowCount = Array.isArray(res)
+      ? (res[res.length - 1]?.rowCount ?? rows.length)
+      : (res?.rowCount ?? rows.length);
     return {
-      rows: res.rows,
-      rowCount: res.rowCount ?? res.rows.length,
+      rows,
+      rowCount,
     };
   }
 
@@ -140,6 +160,38 @@ export class DatabaseService implements IDatabaseService {
     } catch {
       this.isConnected = false;
       return false;
+    }
+  }
+
+  async testConnection(): Promise<ConnectionTestResult> {
+    try {
+      if (!this.pool) {
+        return {
+          connected: false,
+          error: { message: 'Database pool not initialized' },
+        };
+      }
+      const client = await this.pool.connect();
+      try {
+        const res = await client.query('SELECT 1 as health');
+        this.isConnected = res.rows.length > 0;
+        return { connected: this.isConnected };
+      } finally {
+        client.release();
+      }
+    } catch (err: any) {
+      this.isConnected = false;
+      return {
+        connected: false,
+        error: {
+          message: err?.message || String(err),
+          code: err?.code,
+          name: err?.name,
+          severity: err?.severity,
+          detail: err?.detail,
+          routine: err?.routine,
+        },
+      };
     }
   }
 

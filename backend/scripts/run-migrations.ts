@@ -6,8 +6,12 @@ export { runMigrations, MigrationExecutionResult };
 if (require.main === module) {
   runMigrations()
     .then((result) => {
-      if (!result.success && result.error) {
-        Logger.warn(`Migration script completed with notice: ${result.error}`);
+      if (!result.success) {
+        Logger.error(`Migration script failed: ${result.error}`, {
+          resource: 'DATABASE_MIGRATION',
+          error: result.error,
+        });
+        process.exit(1);
       }
       process.exit(0);
     })

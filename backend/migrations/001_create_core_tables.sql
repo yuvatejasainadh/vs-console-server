@@ -1,11 +1,9 @@
 -- VoiceShield Console Core Schema Migration
 -- Authoritative schema for PostgreSQL RDS
 
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
 -- Users
 CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     display_name VARCHAR(255) NOT NULL,
@@ -20,7 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- Refresh Tokens
 CREATE TABLE IF NOT EXISTS refresh_tokens (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token_hash VARCHAR(255) NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
@@ -30,7 +28,7 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 
 -- Work Items
 CREATE TABLE IF NOT EXISTS work_items (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title VARCHAR(255) NOT NULL,
     description TEXT NOT NULL,
     priority VARCHAR(50) NOT NULL DEFAULT 'MEDIUM' CHECK (priority IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
@@ -43,7 +41,7 @@ CREATE TABLE IF NOT EXISTS work_items (
 
 -- Work Assignments History
 CREATE TABLE IF NOT EXISTS work_assignments (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     work_id UUID NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
     assigned_to UUID NOT NULL REFERENCES users(id),
     assigned_by UUID NOT NULL REFERENCES users(id),
@@ -52,7 +50,7 @@ CREATE TABLE IF NOT EXISTS work_assignments (
 
 -- Work Status History
 CREATE TABLE IF NOT EXISTS work_status_history (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     work_id UUID NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
     from_status VARCHAR(50),
     to_status VARCHAR(50) NOT NULL,
@@ -63,7 +61,7 @@ CREATE TABLE IF NOT EXISTS work_status_history (
 
 -- Developer Documentation
 CREATE TABLE IF NOT EXISTS developer_documents (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     work_id UUID UNIQUE NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
     author_id UUID NOT NULL REFERENCES users(id),
     what_i_did TEXT NOT NULL,
@@ -75,7 +73,7 @@ CREATE TABLE IF NOT EXISTS developer_documents (
     testing_performed TEXT NOT NULL,
     result TEXT NOT NULL,
     next_steps TEXT,
-    references JSONB DEFAULT '[]'::jsonb,
+    "references" JSONB DEFAULT '[]'::jsonb,
     status VARCHAR(50) NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT', 'SUBMITTED', 'CHANGES_REQUESTED', 'APPROVED')),
     version INT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -84,7 +82,7 @@ CREATE TABLE IF NOT EXISTS developer_documents (
 
 -- Developer Documentation Versions
 CREATE TABLE IF NOT EXISTS developer_document_versions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id UUID NOT NULL REFERENCES developer_documents(id) ON DELETE CASCADE,
     version_number INT NOT NULL,
     author_id UUID NOT NULL REFERENCES users(id),
@@ -98,7 +96,7 @@ CREATE TABLE IF NOT EXISTS developer_document_versions (
 
 -- Developer Document Reviews
 CREATE TABLE IF NOT EXISTS developer_document_reviews (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id UUID NOT NULL REFERENCES developer_documents(id) ON DELETE CASCADE,
     version_number INT NOT NULL,
     reviewer_id UUID NOT NULL REFERENCES users(id),
@@ -109,7 +107,7 @@ CREATE TABLE IF NOT EXISTS developer_document_reviews (
 
 -- Compatible Devices
 CREATE TABLE IF NOT EXISTS devices (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     device_name VARCHAR(255) NOT NULL,
     model_number VARCHAR(100) NOT NULL,
     manufacturer VARCHAR(100) NOT NULL,
@@ -121,7 +119,7 @@ CREATE TABLE IF NOT EXISTS devices (
 
 -- Device Status History
 CREATE TABLE IF NOT EXISTS device_status_history (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
     from_status VARCHAR(50) NOT NULL,
     to_status VARCHAR(50) NOT NULL,
@@ -132,7 +130,7 @@ CREATE TABLE IF NOT EXISTS device_status_history (
 
 -- Testing Objectives
 CREATE TABLE IF NOT EXISTS testing_objectives (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title VARCHAR(255) NOT NULL,
     description TEXT NOT NULL,
     target_area VARCHAR(255) NOT NULL,
@@ -145,7 +143,7 @@ CREATE TABLE IF NOT EXISTS testing_objectives (
 
 -- Test Sessions (Quick Test)
 CREATE TABLE IF NOT EXISTS test_sessions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     test_id VARCHAR(100) UNIQUE NOT NULL,
     objective_id UUID NOT NULL REFERENCES testing_objectives(id),
     tester_id UUID NOT NULL REFERENCES users(id),
@@ -161,7 +159,7 @@ CREATE TABLE IF NOT EXISTS test_sessions (
 
 -- Test Submissions
 CREATE TABLE IF NOT EXISTS test_submissions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id UUID NOT NULL REFERENCES test_sessions(id) ON DELETE CASCADE,
     objective_id UUID NOT NULL REFERENCES testing_objectives(id),
     tester_id UUID NOT NULL REFERENCES users(id),
@@ -182,7 +180,7 @@ CREATE TABLE IF NOT EXISTS test_submissions (
 
 -- Test Reviews
 CREATE TABLE IF NOT EXISTS test_reviews (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     submission_id UUID NOT NULL REFERENCES test_submissions(id) ON DELETE CASCADE,
     reviewer_id UUID NOT NULL REFERENCES users(id),
     action VARCHAR(50) NOT NULL,
@@ -192,7 +190,7 @@ CREATE TABLE IF NOT EXISTS test_reviews (
 
 -- Evidence Files
 CREATE TABLE IF NOT EXISTS evidence_files (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     submission_id UUID NOT NULL REFERENCES test_submissions(id) ON DELETE CASCADE,
     filename VARCHAR(255) NOT NULL,
     mime_type VARCHAR(100) NOT NULL,
@@ -205,7 +203,7 @@ CREATE TABLE IF NOT EXISTS evidence_files (
 
 -- Audit Logs (Append-Only)
 CREATE TABLE IF NOT EXISTS audit_logs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     event_type VARCHAR(100) NOT NULL,
     actor_id VARCHAR(100) NOT NULL,
     actor_role VARCHAR(50) NOT NULL,
@@ -221,7 +219,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 
 -- Database Exports
 CREATE TABLE IF NOT EXISTS database_exports (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     requested_by UUID NOT NULL REFERENCES users(id),
     format VARCHAR(20) NOT NULL CHECK (format IN ('SQL', 'CSV', 'JSON')),
     database_name VARCHAR(100) NOT NULL,
@@ -236,7 +234,7 @@ CREATE TABLE IF NOT EXISTS database_exports (
 
 -- Notifications
 CREATE TABLE IF NOT EXISTS notifications (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title VARCHAR(255) NOT NULL,
     message TEXT NOT NULL,
@@ -248,7 +246,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 
 -- Database Backups
 CREATE TABLE IF NOT EXISTS database_backups (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     backup_name VARCHAR(255) NOT NULL,
     storage_key VARCHAR(500) NOT NULL,
     size_bytes BIGINT NOT NULL,
@@ -258,7 +256,7 @@ CREATE TABLE IF NOT EXISTS database_backups (
 
 -- Database Users
 CREATE TABLE IF NOT EXISTS database_users (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username VARCHAR(100) UNIQUE NOT NULL,
     role VARCHAR(100) NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',

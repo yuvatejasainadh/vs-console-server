@@ -2,7 +2,12 @@ import fs from 'fs';
 import path from 'path';
 import { DatabaseService } from './db.service';
 import { Logger } from '../common/logger';
-import { config } from '../config/env';
+import { config, loadEnvironment, validateDatabaseConfig } from '../config/env';
+
+export interface MigrationOptions {
+  env?: string;
+  migrationsDir?: string;
+}
 
 export interface MigrationExecutionResult {
   success: boolean;
@@ -29,31 +34,82 @@ export function resolveMigrationsDir(): string {
 }
 
 export async function runMigrations(
+  options: MigrationOptions = {},
   db: DatabaseService = DatabaseService.getInstance()
 ): Promise<MigrationExecutionResult> {
-  const migrationsDir = resolveMigrationsDir();
+  // 1. Explicitly load environment if specified via options or CLI flags
+  if (options.env || process.argv.includes('--env=production') || process.argv.includes('--prod')) {
+    const targetEnv = options.env || 'production';
+    loadEnvironment(targetEnv);
+    db.initPool(); // Reinitialize pool with refreshed environment config
+  }
+
+  const migrationsDir = options.migrationsDir || resolveMigrationsDir();
+  const applied: string[] = [];
+  const skipped: string[] = [];
+
   Logger.info(`Starting PostgreSQL schema migration check for database '${config.database.name}'...`, {
     resource: 'DATABASE_MIGRATION',
     details: {
+      env: config.appEnv,
       host: config.database.host || 'url_configured',
       database: config.database.name,
+      user: config.database.user,
       ssl: config.database.ssl,
+      sslCaPath: config.database.sslCa ? 'Configured/Loaded' : 'None',
+      rejectUnauthorized: config.database.sslRejectUnauthorized,
       migrationsDir,
     },
   });
 
-  const applied: string[] = [];
-  const skipped: string[] = [];
+  // 2. Validate database configuration
+  const validation = validateDatabaseConfig(config.database, config.appEnv);
+  if (validation.warnings.length > 0) {
+    validation.warnings.forEach((w) =>
+      Logger.warn(`Migration config warning: ${w}`, { resource: 'DATABASE_MIGRATION' })
+    );
+  }
+
+  if (!validation.valid) {
+    const errorMsg = `Database configuration validation failed: ${validation.errors.join('; ')}`;
+    Logger.error(errorMsg, {
+      resource: 'DATABASE_MIGRATION',
+      error: errorMsg,
+      details: { errors: validation.errors },
+    });
+    return { success: false, applied, skipped, error: errorMsg };
+  }
 
   try {
-    const isConnected = await db.checkHealth();
-    if (!isConnected) {
-      const msg = 'PostgreSQL database not currently reachable. Skipping live SQL execution.';
-      Logger.warn(msg, { resource: 'DATABASE_MIGRATION' });
-      return { success: false, applied, skipped, error: msg };
+    // 3. Verify PostgreSQL database connectivity with detailed error capture
+    const connTest = await db.testConnection();
+    if (!connTest.connected) {
+      const err = connTest.error;
+      const errorMsg = `Failed to connect to PostgreSQL database '${config.database.name}' at '${
+        config.database.host || 'url_configured'
+      }:${config.database.port}'. [${err?.code || err?.name || 'CONNECTION_ERROR'}] ${err?.message}${
+        err?.detail ? ` - Detail: ${err.detail}` : ''
+      }`;
+
+      Logger.error(errorMsg, {
+        resource: 'DATABASE_MIGRATION',
+        error: err?.message || 'Connection failed',
+        details: {
+          code: err?.code,
+          name: err?.name,
+          severity: err?.severity,
+          host: config.database.host,
+          port: config.database.port,
+          database: config.database.name,
+          user: config.database.user,
+          ssl: config.database.ssl,
+          sslCa: config.database.sslCa ? 'Loaded' : 'Not Loaded',
+        },
+      });
+      return { success: false, applied, skipped, error: errorMsg };
     }
 
-    // 1. Ensure migration tracking table exists
+    // 4. Ensure migration tracking table exists
     await db.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         id VARCHAR(255) PRIMARY KEY,
@@ -61,16 +117,15 @@ export async function runMigrations(
       );
     `);
 
-    // 2. Fetch already applied migrations
+    // 5. Fetch already applied migrations
     const existingResult = await db.query<{ id: string }>('SELECT id FROM schema_migrations;');
     const appliedSet = new Set<string>(existingResult.rows.map((r) => r.id));
 
-    // 3. Read migration files sorted in order
+    // 6. Read migration files sorted in alphabetical/chronological order
     if (!fs.existsSync(migrationsDir)) {
-      Logger.warn(`Migrations directory not found at: ${migrationsDir}`, {
-        resource: 'DATABASE_MIGRATION',
-      });
-      return { success: true, applied, skipped };
+      const errorMsg = `Migrations directory not found at: ${migrationsDir}`;
+      Logger.error(errorMsg, { resource: 'DATABASE_MIGRATION', error: errorMsg });
+      return { success: false, applied, skipped, error: errorMsg };
     }
 
     const files = fs
@@ -107,21 +162,33 @@ export async function runMigrations(
       applied.push(file);
     }
 
-    Logger.info(
-      `Migrations run completed. Applied: ${applied.length}, Skipped (Already applied): ${skipped.length}`,
-      {
-        resource: 'DATABASE_MIGRATION',
-        details: { appliedCount: applied.length, skippedCount: skipped.length },
-      }
-    );
+    if (applied.length === 0) {
+      Logger.info(
+        `All migrations are up to date (${skipped.length} applied previously, 0 pending).`,
+        {
+          resource: 'DATABASE_MIGRATION',
+          details: { totalTracked: skipped.length },
+        }
+      );
+    } else {
+      Logger.info(
+        `Migrations run completed successfully. Applied: ${applied.length}, Previously applied: ${skipped.length}`,
+        {
+          resource: 'DATABASE_MIGRATION',
+          details: { appliedCount: applied.length, skippedCount: skipped.length },
+        }
+      );
+    }
+
     return { success: true, applied, skipped };
   } catch (err: any) {
-    Logger.error('Error running migrations', {
+    const errorMsg = `Error executing migrations on '${config.database.name}': ${err.message}`;
+    Logger.error(errorMsg, {
       resource: 'DATABASE_MIGRATION',
       error: err.message,
       details: { stack: err.stack },
     });
-    return { success: false, applied, skipped, error: err.message };
+    return { success: false, applied, skipped, error: errorMsg };
   }
 }
 
