@@ -1,5 +1,6 @@
-import { Pool, PoolClient } from 'pg';
-import { config } from '../config/env';
+import fs from 'fs';
+import { Pool, PoolClient, PoolConfig } from 'pg';
+import { config, DatabaseConfig } from '../config/env';
 import { Logger } from '../common/logger';
 import { IDatabaseClient, IDatabaseService, QueryResult } from './db.interface';
 
@@ -35,18 +36,58 @@ export class DatabaseService implements IDatabaseService {
     return DatabaseService.instance;
   }
 
-  private initPool(): void {
+  public initPool(customDbConfig?: DatabaseConfig): void {
     try {
-      this.pool = new Pool({
-        connectionString: config.databaseUrl,
-        max: 20,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 5000,
-      });
+      if (this.pool) {
+        this.pool.end().catch(() => {});
+        this.pool = null;
+      }
+
+      const db = customDbConfig || config.database;
+      const poolConfig: PoolConfig = {
+        max: db.poolMax,
+        min: db.poolMin,
+        idleTimeoutMillis: db.idleTimeoutMillis,
+        connectionTimeoutMillis: db.connectionTimeoutMillis,
+      };
+
+      if (db.host) {
+        poolConfig.host = db.host;
+        poolConfig.port = db.port;
+        poolConfig.database = db.name;
+        poolConfig.user = db.user;
+        poolConfig.password = db.password;
+      } else if (db.connectionString || config.databaseUrl) {
+        poolConfig.connectionString = db.connectionString || config.databaseUrl;
+      }
+
+      if (db.ssl) {
+        let caContent: string | undefined;
+        if (db.sslCa) {
+          try {
+            if (fs.existsSync(db.sslCa)) {
+              caContent = fs.readFileSync(db.sslCa, 'utf-8');
+            } else if (db.sslCa.includes('BEGIN CERTIFICATE')) {
+              caContent = db.sslCa;
+            }
+          } catch (caErr: any) {
+            Logger.warn(`Could not load CA from '${db.sslCa}': ${caErr?.message}`);
+          }
+        }
+
+        poolConfig.ssl = {
+          rejectUnauthorized: db.sslRejectUnauthorized,
+          ca: caContent || undefined,
+        };
+      }
+
+      this.pool = new Pool(poolConfig);
 
       this.pool.on('error', (err) => {
         Logger.error('Unexpected error on idle PostgreSQL client', { error: err.message });
       });
+
+      this.isConnected = false;
     } catch (err: any) {
       Logger.warn(`PostgreSQL pool initialization note: ${err?.message}`);
     }
@@ -94,16 +135,41 @@ export class DatabaseService implements IDatabaseService {
     try {
       if (!this.pool) return false;
       const res = await this.pool.query('SELECT 1 as health');
-      return res.rows.length > 0;
+      this.isConnected = res.rows.length > 0;
+      return this.isConnected;
     } catch {
+      this.isConnected = false;
       return false;
     }
+  }
+
+  getPool(): Pool | null {
+    return this.pool;
+  }
+
+  getStatusSummary(): {
+    database: string;
+    host: string;
+    ssl: boolean;
+    poolMax: number;
+    poolMin: number;
+    connected: boolean;
+  } {
+    return {
+      database: config.database.name,
+      host: config.database.host || 'url_configured',
+      ssl: config.database.ssl,
+      poolMax: config.database.poolMax,
+      poolMin: config.database.poolMin,
+      connected: this.isConnected,
+    };
   }
 
   async close(): Promise<void> {
     if (this.pool) {
       await this.pool.end();
       this.pool = null;
+      this.isConnected = false;
     }
   }
 }

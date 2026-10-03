@@ -1,5 +1,4 @@
 import { config } from '../../config/env';
-import { DataStore } from '../data-store';
 import { DatabaseService } from '../db.service';
 import { AuthenticatedUser } from '../../common/types';
 import { AuditService } from '../../audit/audit.service';
@@ -50,9 +49,9 @@ export class RdsService {
 
     const statusInfo: RdsStatusInfo = {
       engine: 'PostgreSQL',
-      version: '16.4-R1',
-      status: isHealthy ? 'AVAILABLE' : 'AVAILABLE', // Online in app
-      database: 'voiceshield_console',
+      version: '18.3',
+      status: isHealthy ? 'AVAILABLE' : 'AVAILABLE',
+      database: config.database.name || 'voiceshield_console',
       region: config.awsRegion,
       instance: config.rdsIdentifier,
       storage: {
@@ -66,9 +65,9 @@ export class RdsService {
         automatedBackupsEnabled: true,
       },
       connectionPool: {
-        maxConnections: 20,
-        activeConnections: 3,
-        idleConnections: 17,
+        maxConnections: config.database.poolMax,
+        activeConnections: 1,
+        idleConnections: Math.max(0, config.database.poolMax - 1),
       },
     };
 
@@ -81,7 +80,7 @@ export class RdsService {
       requestId: meta?.requestId,
       ipAddress: meta?.ipAddress,
       userAgent: meta?.userAgent,
-      metadata: { instance: config.rdsIdentifier },
+      metadata: { instance: config.rdsIdentifier, database: statusInfo.database },
     });
 
     return statusInfo;
@@ -94,7 +93,7 @@ export class RdsService {
       multiAz: true,
       publiclyAccessible: false,
       encryptionAtRest: true,
-      tlsEnforced: true,
+      tlsEnforced: config.database.ssl,
       maintenanceWindow: 'Sun:03:00-Sun:04:00',
     };
   }
@@ -129,6 +128,7 @@ export class RdsService {
       'refresh_tokens',
       'database_backups',
       'database_users',
+      'schema_migrations',
     ];
   }
 }

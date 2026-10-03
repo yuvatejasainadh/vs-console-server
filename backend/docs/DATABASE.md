@@ -1,12 +1,51 @@
-# VoiceShield Console Database Architecture
+# VoiceShield Console Database Architecture & AWS RDS Specification
 
-**Database Engine:** PostgreSQL 16  
+**Database Engine:** PostgreSQL (AWS RDS PostgreSQL 18.3 compatible)  
+**Target Host:** `voiceshield-prod-db.chcku4ke2u3b.ap-south-2.rds.amazonaws.com`  
+**Region:** `ap-south-2` (Hyderabad)  
+**Database Name:** `voiceshield_console`  
+**Application DB User:** Dedicated Console user (e.g. `voiceshield_console_user`)  
 **Dialect:** Standard SQL with UUID extension (`uuid-ossp`)  
 **Storage & Timestamps:** All datetime fields stored in UTC (`TIMESTAMPTZ`)
 
 ---
 
-## 1. Entity-Relationship Overview
+## 1. Logical Isolation & Architecture
+
+VoiceShield Console operates in its own dedicated database (`voiceshield_console`) within the AWS RDS instance:
+
+```text
+AWS RDS Instance (voiceshield-prod-db.chcku4ke2u3b.ap-south-2.rds.amazonaws.com)
+    └── Database: voiceshield_console
+          ├── Table: schema_migrations
+          ├── Table: users
+          ├── Table: refresh_tokens
+          ├── Table: work_items
+          ├── Table: work_assignments
+          ├── Table: work_status_history
+          ├── Table: developer_documents
+          ├── Table: developer_document_versions
+          ├── Table: developer_document_reviews
+          ├── Table: devices
+          ├── Table: device_status_history
+          ├── Table: testing_objectives
+          ├── Table: test_sessions
+          ├── Table: test_submissions
+          ├── Table: test_reviews
+          ├── Table: evidence_files
+          ├── Table: audit_logs
+          ├── Table: database_exports
+          ├── Table: notifications
+          ├── Table: database_backups
+          └── Table: database_users
+```
+
+> [!IMPORTANT]
+> The Console database is strictly separated from any core VoiceShield backend databases. The backend never uses administrative credentials (`vs_admin` / `postgres`) and only connects to `voiceshield_console`.
+
+---
+
+## 2. Entity-Relationship Overview
 
 ```mermaid
 erDiagram
@@ -25,67 +64,36 @@ erDiagram
 
 ---
 
-## 2. Core Tables Schema Definition
+## 3. Migration Mechanism & Safety
 
-### 2.1 `users`
-- `id` (UUID PK): Unique identifier
-- `email` (VARCHAR 255 UNIQUE): User login email
-- `password_hash` (VARCHAR 255): Bcrypt password hash
-- `display_name` (VARCHAR 255): User full name
-- `role` (VARCHAR 50): `SUPER_ADMIN` | `ADMIN` | `DEVELOPER` | `TESTER`
-- `status` (VARCHAR 50): `ACTIVE` | `DISABLED`
-- `failed_login_attempts` (INT): Counter for lockout protection
-- `locked_until` (TIMESTAMPTZ): Lockout expiration timestamp
-- `last_login_at` (TIMESTAMPTZ): Most recent authentication
+Migrations are located in `migrations/` and executed via the transactional, tracked migration runner (`npm run migration:run` or `npm run migration:run:prod`):
 
-### 2.2 `work_items` & `work_status_history`
-- `id` (UUID PK)
-- `title` (VARCHAR 255), `description` (TEXT), `priority` (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`)
-- `status`: `ASSIGNED` ➔ `ACCEPTED` ➔ `IN_PROGRESS` ➔ `DOCUMENTATION_SUBMITTED` ➔ `APPROVED` / `CHANGES_REQUESTED` ➔ `COMPLETED`
-- `assigned_to` (UUID FK -> users.id), `assigned_by` (UUID FK -> users.id)
-- `work_status_history`: Tracks immutable transitions with `from_status`, `to_status`, `changed_by`, `notes`, `created_at`.
+- **Tracking Table:** `schema_migrations (id VARCHAR(255) PRIMARY KEY, applied_at TIMESTAMPTZ)`
+- **Idempotency:** All SQL statements use `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, and `CREATE EXTENSION IF NOT EXISTS`.
+- **Atomic Execution:** Each migration file executes inside a transaction. Upon success, the filename is recorded in `schema_migrations`.
+- **Zero Destruction:** No `DROP`, `TRUNCATE`, or schema wiping operations are permitted.
 
-### 2.3 `developer_documents`, `versions`, & `reviews`
-- `developer_documents`: Primary active document record linked to `work_items.id`.
-- `developer_document_versions`: Immutable content snapshot created upon each submission (`content_snapshot` JSONB).
-- `developer_document_reviews`: Review decision (`APPROVED`, `CHANGES_REQUESTED`, `FEEDBACK`) and reviewer comments.
-
-### 2.4 `testing_objectives`, `test_sessions`, & `test_submissions`
-- `testing_objectives`: Exploratory testing purposes and targets.
-- `test_sessions`: Quick Test execution records linking tester, device, objective, app version, and Android OS version.
-- `test_submissions`: Manual testing results with outcomes `PASS`, `FAIL`, `BLOCKED`, `NOT_TESTED`.
-- `evidence_files`: Metadata referencing screenshots, recordings, and log files in object storage.
-
-### 2.5 `devices` & `device_status_history`
-- `devices`: Compatible test hardware inventory with `status` (`ACTIVE` / `INACTIVE`). Soft deactivation preserved; foreign key constraint protects historical test references from deletion.
-
-### 2.6 `audit_logs` (Append-Only)
-- `id` (UUID PK), `event_type`, `actor_id`, `actor_role`, `action`, `resource_type`, `resource_id`, `request_id`, `ip_address`, `user_agent`, `metadata`, `created_at`.
-- Strict application-layer immutability with no update or delete privileges.
-
----
-
-## 3. Database Indexes
-
-```sql
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_work_items_assigned_to ON work_items(assigned_to);
-CREATE INDEX idx_work_items_status ON work_items(status);
-CREATE INDEX idx_testing_objectives_assigned_to ON testing_objectives(assigned_to);
-CREATE INDEX idx_test_submissions_tester_id ON test_submissions(tester_id);
-CREATE INDEX idx_test_submissions_status ON test_submissions(status);
-CREATE INDEX idx_audit_logs_actor_id ON audit_logs(actor_id);
-CREATE INDEX idx_audit_logs_event_type ON audit_logs(event_type);
-CREATE INDEX idx_notifications_user_id ON notifications(user_id, read);
+Migration execution command:
+```bash
+npm run migration:run
 ```
 
 ---
 
-## 4. Connection Pool Configuration
+## 4. Connection Pool Configuration (Render Free Tier)
 
-| Parameter | Recommended Dev | Recommended Production | Description |
-|:---|:---:|:---:|:---|
-| `DB_POOL_MIN` | 2 | 5 | Minimum idle connections maintained in pool |
-| `DB_POOL_MAX` | 10 | 30 | Maximum concurrent active connections |
-| `DB_CONNECTION_TIMEOUT` | 5000ms | 5000ms | Fail fast timeout for acquiring connection |
-| `DB_IDLE_TIMEOUT` | 30000ms | 30000ms | Release idle connections after 30 seconds |
+| Parameter | Env Variable | Default Dev | Recommended Production (Render) | Description |
+|:---|:---|:---:|:---:|:---|
+| Pool Minimum | `DATABASE_POOL_MIN` | 2 | 2 | Minimum idle connections |
+| Pool Maximum | `DATABASE_POOL_MAX` | 5 | 5 | Max connections (conserves Render RAM & RDS slots) |
+| Connection Timeout | `DATABASE_CONNECTION_TIMEOUT` | 5000ms | 5000ms | Fast-fail connection timeout |
+| Idle Timeout | `DATABASE_IDLE_TIMEOUT` | 30000ms | 30000ms | Release idle connections after 30s |
+
+---
+
+## 5. SSL / TLS Configuration
+
+AWS RDS connections require SSL/TLS in production:
+- Set `DATABASE_SSL=true`
+- Set `DATABASE_SSL_REJECT_UNAUTHORIZED=true`
+- Optional custom CA bundle path: `DATABASE_SSL_CA=/path/to/global-bundle.pem`

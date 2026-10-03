@@ -20,8 +20,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=4000
 
-# Install curl for container health check
-RUN apk add --no-cache curl
+# Install curl for health checks and ca-certificates for secure AWS RDS TLS
+RUN apk add --no-cache curl ca-certificates
 
 # Create non-root app user for container security
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
@@ -31,6 +31,7 @@ RUN npm ci --only=production
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/migrations ./migrations
+COPY --from=builder /app/scripts ./scripts
 
 # Create storage directory for local evidence / exports fallback
 RUN mkdir -p /app/storage && chown -R appuser:appgroup /app

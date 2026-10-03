@@ -10,6 +10,7 @@
     "test": "jest --runInBand --detectOpenHandles",
     "test:coverage": "jest --coverage --runInBand",
     "migration:run": "tsx scripts/run-migrations.ts",
+    "migration:run:prod": "node dist/database/migration-runner.js",
     "database:seed": "tsx scripts/seed.ts",
     "lint": "tsc --noEmit"
   },
