@@ -41,6 +41,20 @@ export async function seedDevelopmentData(store: DataStore = DataStore.getInstan
     updated_at: now,
   };
 
+  const sainadhProd: UserEntity = {
+    id: '11111111-1111-4111-a111-111111111112',
+    email: 'sainadh@voiceshield.ai',
+    password_hash: '$2a$12$rndt2CcnDURye4ndX6rWquhnDJ6a/thMWaoOOXD4u/Q7bMQApkwm6',
+    display_name: 'Sainadh',
+    role: UserRole.SUPER_ADMIN,
+    status: 'ACTIVE',
+    failed_login_attempts: 0,
+    locked_until: null,
+    last_login_at: now,
+    created_at: now,
+    updated_at: now,
+  };
+
   const adminUser: UserEntity = {
     id: '22222222-2222-4222-a222-222222222222',
     email: 'admin@voiceshield.internal',
@@ -98,6 +112,7 @@ export async function seedDevelopmentData(store: DataStore = DataStore.getInstan
   };
 
   store.users.set(sainadh.id, sainadh);
+  store.users.set(sainadhProd.id, sainadhProd);
   store.users.set(adminUser.id, adminUser);
   store.users.set(devOne.id, devOne);
   store.users.set(devTwo.id, devTwo);
@@ -239,6 +254,7 @@ export async function seedDevelopmentData(store: DataStore = DataStore.getInstan
   return {
     users: {
       sainadh,
+      sainadhProd,
       adminUser,
       devOne,
       devTwo,
